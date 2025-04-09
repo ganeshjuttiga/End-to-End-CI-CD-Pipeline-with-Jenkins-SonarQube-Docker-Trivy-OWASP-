@@ -1,0 +1,78 @@
+pipeline{
+    agent any
+    tools{
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment{
+        SCANNER_HOME = tool 'mysonar'
+    }
+    stages{
+        stage("clean WS"){
+            steps{
+                cleanWs()
+            }
+        }
+        stage("code"){
+            steps{
+              git "https://github.com/ganeshjuttiga/Zomato-Project.git"
+            }
+        }
+        stage("Sonarqube Analysis") {
+            steps{
+                withSonarQubeEnv('mysonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=zomato \
+                    -Dsonar.projectKey=zomato '''
+                }
+            }
+        }
+        stage("qualitygates"){
+            steps{
+                script{
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-password'
+                }
+            }
+        }
+        stage("node"){
+            steps{
+                sh 'npm install'
+            }
+        }
+        stage("owasp"){
+            steps{
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --diasbleNodeAudit', odcInstallation: 'dp-check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage("buildimage"){
+            steps{
+                sh 'docker build -t image1 .'
+            }
+        }
+        stage("trivy"){
+            steps{
+                sh 'trivy fs . >> trivyfs.txt'
+            }
+        }
+        stage("image scan"){
+            steps{
+                sh "trivy image image1"
+            }
+        }
+        stage("dockerhub"){
+            steps{
+                script{
+                    withDockerRegistry(credentialsId: 'docker-password') {
+                        sh 'docker tag image1 ganeshjuttiga/dockerdeployment:v1'
+                        sh 'docker push ganeshjuttiga/dockerdeployment:v1'
+                    }
+                }
+            }
+        }
+        stage("deployment"){
+            steps{
+                sh 'docker run -itd --name cont1 -p 9999:3000 ganeshjuttiga/dockerdeployment:v1'
+            }
+        }
+    }
+}
